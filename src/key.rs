@@ -7,6 +7,15 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 /// Prefix bytes (tag) to indicate a full public key.
 pub const TAG_PUBKEY_FULL: u8 = 0x04;
 
+/// Prefix bytes to indicate Ed25519 multibase encoding.
+pub const ED25519_CODEC: [u8; 2] = [0xed, 0x01];
+
+/// Prefix bytes to indicate X25519 multibase encoding.
+pub const X25519_CODEC: [u8; 2] = [0xec, 0x01];
+
+/// Alias for multi-base encoded string.
+pub type MultiKey = String;
+
 /// A secret key that can be used to compute a single `SharedSecret` or to
 /// sign a payload.
 ///

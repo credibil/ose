@@ -12,7 +12,9 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 pub use encryption::{AlgAlgorithm, EncAlgorithm, Receiver};
-pub use key::{PublicKey, SecretKey, SharedSecret, TAG_PUBKEY_FULL};
+pub use key::{
+    ED25519_CODEC, MultiKey, PublicKey, SecretKey, SharedSecret, TAG_PUBKEY_FULL, X25519_CODEC,
+};
 pub use signing::Signer;
 
 /// Algorithm is used to specify the signing algorithm used by the signer.
