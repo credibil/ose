@@ -4,6 +4,7 @@ use anyhow::anyhow;
 use base64ct::{Base64UrlUnpadded, Encoding};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+/// Prefix bytes (tag) to indicate a full public key.
 pub const TAG_PUBKEY_FULL: u8 = 0x04;
 
 /// A secret key that can be used to compute a single `SharedSecret` or to
