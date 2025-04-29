@@ -1,15 +1,13 @@
-use anyhow::{Result, anyhow};
+//! # Types for keys
+
+use anyhow::anyhow;
 use base64ct::{Base64UrlUnpadded, Encoding};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const TAG_PUBKEY_FULL: u8 = 0x04;
-// const TAG_PUBKEY_EVEN: u8 = 0x02;
-// const TAG_PUBKEY_ODD: u8 = 0x03;
-// const TAG_PUBKEY_HYBRID_EVEN: u8 = 0x06;
-// const TAG_PUBKEY_HYBRID_ODD: u8 = 0x07;
 
-/// A short-lived secret key that can only be used to compute a single
-/// `SharedSecret`.
+/// A secret key that can be used to compute a single `SharedSecret` or to
+/// sign a payload.
 ///
 /// The [`SecretKey::shared_secret`] method consumes and then wipes the secret
 /// key. The compiler statically checks that the resulting secret is used at most
@@ -50,7 +48,7 @@ impl SecretKey {
     ///
     /// # Errors
     /// LATER: document errors
-    pub fn shared_secret(self, sender_public: PublicKey) -> Result<SharedSecret> {
+    pub fn shared_secret(self, sender_public: PublicKey) -> anyhow::Result<SharedSecret> {
         // x25519
         if sender_public.y.is_none() {
             let sender_public = x25519_dalek::PublicKey::from(sender_public.to_bytes());
@@ -69,7 +67,7 @@ impl SecretKey {
 impl TryFrom<SecretKey> for ecies::SecretKey {
     type Error = anyhow::Error;
 
-    fn try_from(val: SecretKey) -> Result<Self> {
+    fn try_from(val: SecretKey) -> anyhow::Result<Self> {
         Self::parse(&val.0).map_err(|e| anyhow!("issue parsing secret key: {e}"))
     }
 }
@@ -124,7 +122,7 @@ impl PublicKey {
     ///
     /// # Errors
     /// LATER: document errors
-    pub fn from_slice(val: &[u8]) -> Result<Self> {
+    pub fn from_slice(val: &[u8]) -> anyhow::Result<Self> {
         Self::try_from(val)
     }
 }
@@ -168,7 +166,7 @@ impl From<ecies::PublicKey> for PublicKey {
 impl TryFrom<&[u8]> for PublicKey {
     type Error = anyhow::Error;
 
-    fn try_from(val: &[u8]) -> Result<Self> {
+    fn try_from(val: &[u8]) -> anyhow::Result<Self> {
         if val.len() == 32 {
             let mut x = [0; 32];
             x.copy_from_slice(&val[0..32]);
@@ -189,7 +187,7 @@ impl TryFrom<&[u8]> for PublicKey {
 impl TryFrom<Vec<u8>> for PublicKey {
     type Error = anyhow::Error;
 
-    fn try_from(val: Vec<u8>) -> Result<Self> {
+    fn try_from(val: Vec<u8>) -> anyhow::Result<Self> {
         Self::try_from(val.as_slice())
     }
 }
@@ -221,7 +219,7 @@ impl From<PublicKey> for x25519_dalek::PublicKey {
 impl TryFrom<PublicKey> for ecies::PublicKey {
     type Error = anyhow::Error;
 
-    fn try_from(val: PublicKey) -> Result<Self> {
+    fn try_from(val: PublicKey) -> anyhow::Result<Self> {
         let key: [u8; 65] =
             val.to_vec().try_into().map_err(|_| anyhow!("issue converting public key to array"))?;
         Self::parse(&key).map_err(|e| anyhow!("issue parsing public key: {e}"))
