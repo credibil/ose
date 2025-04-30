@@ -1,6 +1,27 @@
 //! # Signing
 
-use crate::Algorithm;
+use std::fmt::Display;
+
+use serde::{Deserialize, Serialize};
+
+/// The signing algorithm used by the signer.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub enum Algorithm {
+    /// Algorithm for the secp256k1 curve
+    #[serde(rename = "ES256K")]
+    ES256K,
+
+    /// Algorithm for the Ed25519 curve
+    #[default]
+    #[serde(rename = "EdDSA")]
+    EdDSA,
+}
+
+impl Display for Algorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
 
 /// Signer is used by implementers to provide signing functionality for
 /// Verifiable Credential issuance and Verifiable Presentation submissions.

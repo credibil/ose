@@ -7,34 +7,14 @@ mod encryption;
 mod key;
 mod signing;
 
-use std::fmt::Display;
-
 use serde::{Deserialize, Serialize};
 
-pub use encryption::{AlgAlgorithm, EncAlgorithm, Receiver};
+pub use ed25519_dalek::PUBLIC_KEY_LENGTH;
+pub use encryption::{AlgAlgorithm, EncAlgorithm, Encrypted, EncryptedCek, Receiver};
 pub use key::{
     ED25519_CODEC, MultiKey, PublicKey, SecretKey, SharedSecret, TAG_PUBKEY_FULL, X25519_CODEC,
 };
-pub use signing::Signer;
-
-/// Algorithm is used to specify the signing algorithm used by the signer.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub enum Algorithm {
-    /// Algorithm for the secp256k1 curve
-    #[serde(rename = "ES256K")]
-    ES256K,
-
-    /// Algorithm for the Ed25519 curve
-    #[default]
-    #[serde(rename = "EdDSA")]
-    EdDSA,
-}
-
-impl Display for Algorithm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
+pub use signing::{Algorithm, Signer};
 
 /// Cryptographic key type.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
