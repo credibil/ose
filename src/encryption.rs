@@ -99,6 +99,12 @@ pub enum EncAlgorithm {
     XChaCha20Poly1305,
 }
 
+impl Display for EncAlgorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+ 
 impl EncAlgorithm {
     /// Decrypt a ciphertext using the content encryption key (CEK) and the
     /// initialization vector (IV) and authentication tag.
