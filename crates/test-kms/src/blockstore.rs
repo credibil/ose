@@ -24,6 +24,12 @@ impl Mockstore {
         BLOCKSTORE.put_keyed(&cid, block).await.map_err(Into::into)
     }
 
+    pub async fn exists(&self, owner: &str, partition: &str, key: &str) -> Result<bool> {
+        let cid = unique_cid(owner, partition, key)?;
+        let exists = BLOCKSTORE.has(&cid).await?;
+        Ok(exists)
+    }
+
     pub async fn get(&self, owner: &str, partition: &str, key: &str) -> Result<Option<Vec<u8>>> {
         let cid = unique_cid(owner, partition, key)?;
         let Some(bytes) = BLOCKSTORE.get(&cid).await? else {
@@ -39,11 +45,11 @@ impl Mockstore {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Identitifier<'a>(&'a str, &'a str, &'a str);
+struct Identifier<'a>(&'a str, &'a str, &'a str);
 const RAW: u64 = 0x55;
 
 fn unique_cid(owner: &str, partition: &str, key: &str) -> anyhow::Result<Cid> {
-    let id = Identitifier(owner, partition, key);
+    let id = Identifier(owner, partition, key);
     let mut buf = Vec::new();
     ciborium::into_writer(&id, &mut buf)?;
     let hash = multihash_codetable::Code::Sha2_256.digest(&buf);
