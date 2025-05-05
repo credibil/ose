@@ -24,3 +24,6 @@ multihash-codetable = { version = "0.1.4", features = ["sha2"] }
 rand.workspace = true
 serde.workspace = true
 x25519-dalek.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

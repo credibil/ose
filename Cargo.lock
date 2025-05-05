@@ -1293,6 +1293,7 @@ dependencies = [
  "multihash-codetable",
  "rand",
  "serde",
+ "tokio",
  "x25519-dalek",
 ]
 

@@ -6,6 +6,7 @@ use std::fmt::Display;
 
 use anyhow::{anyhow, bail};
 use blockstore::Mockstore;
+use credibil_ose::{PublicKey, PUBLIC_KEY_LENGTH};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
@@ -59,10 +60,10 @@ pub struct StoredKey {
     /// The key type.
     pub key_type: KeyType,
 
-    /// The key itself.
+    /// The key itself (private key).
     pub key: Vec<u8>,
 
-    /// The next key to use.
+    /// The next (private) key to use.
     pub next_key: Vec<u8>,
 }
 
@@ -243,13 +244,61 @@ impl Keyring {
     }
 
     /// Remove a key from the keyring.
-    /// 
+    ///
     /// # Errors
     /// Will return an error if the requested key cannot be removed from storage
     /// or the index cannot be updated.
     pub async fn remove(&mut self, key_type: &KeyType, id: impl ToString) -> anyhow::Result<()> {
         self.blockstore.delete("test", &key_type.to_string(), &id.to_string()).await?;
         self.remove_index_entry(key_type, id).await
+    }
+
+    /// Get a public key from the keyring with the given type and ID.
+    ///
+    /// # Errors
+    /// Will return an error if the requested key cannot be retrieved from
+    /// storage or if the public key cannot be inferred from the private key.
+    pub async fn public_key(
+        &mut self, key_type: &KeyType, id: impl ToString,
+    ) -> anyhow::Result<PublicKey> {
+        let stored_key = self
+            .blockstore
+            .get("test", &key_type.to_string(), &id.to_string())
+            .await?
+            .ok_or(anyhow!("key not found"))?;
+        let stored_key = StoredKey::from_bytes(&stored_key)?;
+        match key_type {
+            KeyType::EdDSA => {
+                let signing_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
+                    .key
+                    .try_into()
+                    .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+                let signing_key = ed25519_dalek::SigningKey::try_from(&signing_key_bytes)?;
+                let verifying_key = signing_key.verifying_key();    
+                let public_key =
+                    x25519_dalek::PublicKey::from(verifying_key.to_montgomery().to_bytes());
+                Ok(PublicKey::from(public_key))
+            }
+            KeyType::X25519 => {
+                let secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
+                    .key
+                    .try_into()
+                    .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+                let secret_key = x25519_dalek::StaticSecret::from(secret_key_bytes);
+                let public_key = x25519_dalek::PublicKey::from(&secret_key);
+                Ok(PublicKey::from(public_key))
+            }
+            KeyType::Es256k => {
+                let secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
+                    .key
+                    .try_into()
+                    .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+                let secret_key = ecies::SecretKey::parse(&secret_key_bytes)
+                    .map_err(|_| anyhow!("cannot deserialize secret key"))?;
+                let public_key = ecies::PublicKey::from_secret_key(&secret_key);
+                Ok(PublicKey::from(public_key))
+            }
+        }
     }
 
     /// Add an entry to the keyring index.
@@ -276,7 +325,7 @@ impl Keyring {
     }
 
     /// Remove an entry from the keyring index.
-    /// 
+    ///
     /// # Errors
     /// Will return an error if the index cannot be updated.
     async fn remove_index_entry(
@@ -296,5 +345,72 @@ impl Keyring {
         )?;
         index.remove(&entry);
         self.blockstore.put("test", "keyring", "index", &index.to_bytes()).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn keyring_crud() {
+        let mut keyring = Keyring::new().await.expect("keyring created");
+
+        // Create an Ed25519 key
+        let key_type = KeyType::EdDSA;
+        let id = "one";
+        keyring.add(&key_type, id).await.expect("Ed25519 key added");
+
+        // Get the public key for the Ed25519 key.
+        let _ = keyring.public_key(&key_type, id).await.expect("Ed25519 key retrieved");
+
+        // Create an X25519 key
+        let key_type = KeyType::X25519;
+        let id = "two";
+        keyring.add(&key_type, id).await.expect("key added");
+
+        // Get the public key for the X25519 key.
+        let _ = keyring.public_key(&key_type, id).await.expect("X25519 key retrieved");
+
+        // Create an ES256k key
+        let key_type = KeyType::Es256k;
+        let id = "three";
+        keyring.add(&key_type, id).await.expect("key added");
+
+        // Get the public key for the ES256k key.
+        let _ = keyring.public_key(&key_type, id).await.expect("ES256k key retrieved");
+
+        // Rotate all the keys
+        keyring.rotate_all().await.expect("all keys rotated");
+
+        // Rotate the Ed25519 key
+        let key_type = KeyType::EdDSA;
+        let id = "one";
+        keyring.rotate(&key_type, id).await.expect("Ed25519 key rotated");
+
+        // Replace the X25519 key
+        let key_type = KeyType::X25519;
+        let id = "two";
+        keyring.replace(&key_type, id).await.expect("X25519 key replaced");
+
+        // Remove the Ed25519 key
+        let key_type = KeyType::EdDSA;
+        let id = "one";
+        keyring.remove(&key_type, id).await.expect("Ed25519 key removed");
+
+        // Remove the X25519 key
+        let key_type = KeyType::X25519;
+        let id = "two";
+        keyring.remove(&key_type, id).await.expect("X25519 key removed");
+
+        // Remove the ES256k key
+        let key_type = KeyType::Es256k;
+        let id = "three";
+        keyring.remove(&key_type, id).await.expect("ES256k key removed");
+
+        // Check that the keys are removed
+        let key_type = KeyType::EdDSA;
+        let id = "one";
+        assert!(keyring.public_key(&key_type, id).await.is_err());
     }
 }
