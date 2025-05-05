@@ -165,7 +165,7 @@ impl Keyring {
             key: key_bytes.clone(),
             next_key: next_key_bytes.clone(),
         };
-        self.blockstore.put("test", &key_type.to_string(), &id, &stored_key.to_bytes()).await?;
+        self.blockstore.put("test", "", &id, &stored_key.to_bytes()).await?;
 
         // Update the index.
         self.add_index_entry(key_type, id).await?;
@@ -181,7 +181,7 @@ impl Keyring {
     /// (Use `add` instead).
     pub async fn replace(&mut self, key_type: &KeyType, id: impl ToString) -> anyhow::Result<()> {
         // Check for existence of the key
-        let exists = self.blockstore.exists("test", &key_type.to_string(), &id.to_string()).await?;
+        let exists = self.blockstore.exists("test", "", &id.to_string()).await?;
         if !exists {
             bail!("key not found");
         }
@@ -206,7 +206,7 @@ impl Keyring {
 
             let current_key = self
                 .blockstore
-                .get("test", &key_type.to_string(), id)
+                .get("test", "", id)
                 .await?
                 .ok_or(anyhow!("key not found"))?;
             let current_key = StoredKey::from_bytes(&current_key)?;
@@ -216,7 +216,7 @@ impl Keyring {
                 key: current_key.next_key,
                 next_key,
             };
-            self.blockstore.put("test", &key_type.to_string(), id, &new_key.to_bytes()).await?;
+            self.blockstore.put("test", "", id, &new_key.to_bytes()).await?;
         }
         Ok(())
     }
@@ -228,7 +228,7 @@ impl Keyring {
     pub async fn rotate(&mut self, key_type: &KeyType, id: impl ToString) -> anyhow::Result<()> {
         let current_key = self
             .blockstore
-            .get("test", &key_type.to_string(), &id.to_string())
+            .get("test", "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let current_key = StoredKey::from_bytes(&current_key)?;
@@ -239,7 +239,7 @@ impl Keyring {
             next_key,
         };
         self.blockstore
-            .put("test", &key_type.to_string(), &id.to_string(), &new_key.to_bytes())
+            .put("test", "", &id.to_string(), &new_key.to_bytes())
             .await
     }
 
@@ -249,7 +249,7 @@ impl Keyring {
     /// Will return an error if the requested key cannot be removed from storage
     /// or the index cannot be updated.
     pub async fn remove(&mut self, key_type: &KeyType, id: impl ToString) -> anyhow::Result<()> {
-        self.blockstore.delete("test", &key_type.to_string(), &id.to_string()).await?;
+        self.blockstore.delete("test", "", &id.to_string()).await?;
         self.remove_index_entry(key_type, id).await
     }
 
@@ -263,7 +263,7 @@ impl Keyring {
     ) -> anyhow::Result<PublicKey> {
         let stored_key = self
             .blockstore
-            .get("test", &key_type.to_string(), &id.to_string())
+            .get("test", "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
