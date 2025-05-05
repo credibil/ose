@@ -2,68 +2,24 @@
 
 mod blockstore;
 
-use std::fmt::Display;
-
 use anyhow::{anyhow, bail};
 use blockstore::Mockstore;
-use credibil_ose::{PublicKey, PUBLIC_KEY_LENGTH};
-use rand::rngs::OsRng;
+use credibil_ose::{Curve, PublicKey, Receiver, SecretKey, SharedSecret, PUBLIC_KEY_LENGTH};
 use serde::{Deserialize, Serialize};
-
-/// A type of key to be added to the key store and used for either signing or
-/// encrypting data.
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
-pub enum KeyType {
-    /// A key for signing data with the ED25519 algorithm.
-    EdDSA,
-
-    /// A key for encrypting data with the X25519 algorithm.
-    X25519,
-
-    /// A key for encrypting data with the ES256k algorithm.
-    Es256k,
-}
-
-impl KeyType {
-    /// Generate a new key for the given key type.
-    pub fn generate(&self) -> Vec<u8> {
-        match self {
-            KeyType::EdDSA => {
-                let signing_key = ed25519_dalek::SigningKey::generate(&mut OsRng);
-                signing_key.as_bytes().to_vec()
-            }
-            KeyType::X25519 => {
-                let secret_key = x25519_dalek::StaticSecret::random_from_rng(OsRng);
-                secret_key.to_bytes().to_vec()
-            }
-            KeyType::Es256k => {
-                let (secret_key, _) = ecies::utils::generate_keypair();
-                secret_key.serialize().to_vec()
-            }
-        }
-    }
-}
-
-impl Display for KeyType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            KeyType::EdDSA => write!(f, "EdDSA"),
-            KeyType::X25519 => write!(f, "X25519"),
-            KeyType::Es256k => write!(f, "ES256K"),
-        }
-    }
-}
 
 /// Key as serialized and stored to the blob store.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StoredKey {
-    /// The key type.
-    pub key_type: KeyType,
+    /// The elliptic curve algorithm used for key generation.
+    pub curve: Curve,
 
     /// The key itself (private key).
     pub key: Vec<u8>,
 
     /// The next (private) key to use.
+    /// TODO: This is over-simplified for testing purposes. Do need a next key
+    /// for, say `did:webvh` but also need to be able to version keys on
+    /// rotation and optionally disable key versions.
     pub next_key: Vec<u8>,
 }
 
@@ -156,12 +112,12 @@ impl Keyring {
     /// # Errors
     /// Will return an error if the storage fails or the index cannot be
     /// updated.
-    pub async fn add(&mut self, key_type: &KeyType, id: impl ToString) -> anyhow::Result<()> {
+    pub async fn add(&mut self, curve: &Curve, id: impl ToString) -> anyhow::Result<()> {
         let id = id.to_string();
-        let key_bytes = key_type.generate();
-        let next_key_bytes = key_type.generate();
+        let key_bytes = curve.generate();
+        let next_key_bytes = curve.generate();
         let stored_key = StoredKey {
-            key_type: key_type.clone(),
+            curve: curve.clone(),
             key: key_bytes.clone(),
             next_key: next_key_bytes.clone(),
         };
@@ -186,7 +142,7 @@ impl Keyring {
             bail!("key not found");
         };
         let existing = StoredKey::from_bytes(&existing)?;
-        self.add(&existing.key_type, id).await
+        self.add(&existing.curve, id).await
     }
 
     /// Rotate all keys in the keyring.
@@ -210,9 +166,9 @@ impl Keyring {
                 .await?
                 .ok_or(anyhow!("key not found"))?;
             let current_key = StoredKey::from_bytes(&current_key)?;
-            let next_key = current_key.key_type.generate();
+            let next_key = current_key.curve.generate();
             let new_key = StoredKey {
-                key_type: current_key.key_type.clone(),
+                curve: current_key.curve.clone(),
                 key: current_key.next_key,
                 next_key,
             };
@@ -232,9 +188,9 @@ impl Keyring {
             .await?
             .ok_or(anyhow!("key not found"))?;
         let current_key = StoredKey::from_bytes(&current_key)?;
-        let next_key = current_key.key_type.generate();
+        let next_key = current_key.curve.generate();
         let new_key = StoredKey {
-            key_type: current_key.key_type.clone(),
+            curve: current_key.curve.clone(),
             key: current_key.next_key,
             next_key,
         };
@@ -253,7 +209,7 @@ impl Keyring {
         self.remove_index_entry(id).await
     }
 
-    /// Get a public key from the keyring with the given type and ID.
+    /// Get a public key from the keyring with the given ID.
     ///
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
@@ -265,8 +221,8 @@ impl Keyring {
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
-        match stored_key.key_type {
-            KeyType::EdDSA => {
+        match stored_key.curve {
+            Curve::Ed25519 => {
                 let signing_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
                     .key
                     .try_into()
@@ -277,7 +233,7 @@ impl Keyring {
                     x25519_dalek::PublicKey::from(verifying_key.to_montgomery().to_bytes());
                 Ok(PublicKey::from(public_key))
             }
-            KeyType::X25519 => {
+            Curve::X25519 => {
                 let secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
                     .key
                     .try_into()
@@ -286,7 +242,7 @@ impl Keyring {
                 let public_key = x25519_dalek::PublicKey::from(&secret_key);
                 Ok(PublicKey::from(public_key))
             }
-            KeyType::Es256k => {
+            Curve::Es256K => {
                 let secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
                     .key
                     .try_into()
@@ -296,7 +252,30 @@ impl Keyring {
                 let public_key = ecies::PublicKey::from_secret_key(&secret_key);
                 Ok(PublicKey::from(public_key))
             }
+            Curve::P256 => {
+                unimplemented!("P256 not implemented yet");
+            }
         }
+    }
+
+    /// Get the private key from the keyring with the given ID.
+    /// 
+    /// # Errors
+    /// Will return an error if the requested key cannot be retrieved from
+    /// storage or cannot be converted from the stored bytes.
+    pub (crate) async fn private_key(&self, id: impl ToString) -> anyhow::Result<SecretKey> {
+        let stored_key = self
+            .blockstore
+            .get("test", "", &id.to_string())
+            .await?
+            .ok_or(anyhow!("key not found"))?;
+        let stored_key = StoredKey::from_bytes(&stored_key)?;
+        let secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
+            .key
+            .try_into()
+            .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+        let secret_key = SecretKey::from(secret_key_bytes);
+        Ok(secret_key)
     }
 
     /// Add an entry to the keyring index.
@@ -346,6 +325,40 @@ impl Keyring {
     }
 }
 
+/// A struct to manage which key in the keyring is used as the receiver's key.
+pub struct KeyringReceiver {
+    /// The key ID of the receiver.
+    pub key_id: String,
+
+    /// The keyring to use for encryption.
+    pub keyring: Keyring,
+}
+
+impl KeyringReceiver {
+    /// Create a new keyring receiver.
+    #[must_use]
+    pub fn new(key_id: impl ToString, keyring: Keyring) -> Self {
+        Self {
+            key_id: key_id.to_string(),
+            keyring,
+        }
+    }
+}
+
+/// Receiver implementation for the keyring for encryption.
+impl Receiver for KeyringReceiver {
+    fn key_id(&self) -> String {
+        self.key_id.clone()
+    }
+
+    async fn shared_secret(
+        &self, sender_public: PublicKey,
+    ) -> anyhow::Result<SharedSecret> {
+        let sk = self.keyring.private_key(&self.key_id).await?;
+        sk.shared_secret(sender_public)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,19 +368,19 @@ mod tests {
         let mut keyring = Keyring::new().await.expect("keyring created");
 
         // Create an Ed25519 key
-        keyring.add(&KeyType::EdDSA, "one").await.expect("Ed25519 key added");
+        keyring.add(&Curve::Ed25519, "one").await.expect("Ed25519 key added");
 
         // Get the public key for the Ed25519 key.
         let _ = keyring.public_key("one").await.expect("Ed25519 key retrieved");
 
         // Create an X25519 key
-        keyring.add(&KeyType::X25519, "two").await.expect("key added");
+        keyring.add(&Curve::X25519, "two").await.expect("key added");
 
         // Get the public key for the X25519 key.
         let _ = keyring.public_key("two").await.expect("X25519 key retrieved");
 
         // Create an ES256k key
-        keyring.add(&KeyType::Es256k, "three").await.expect("key added");
+        keyring.add(&Curve::Es256K, "three").await.expect("key added");
 
         // Get the public key for the ES256k key.
         let _ = keyring.public_key("three").await.expect("ES256k key retrieved");

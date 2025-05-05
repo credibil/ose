@@ -30,6 +30,7 @@ ecies.workspace = true
 ed25519-dalek.workspace = true
 k256 = "0.13.4"
 multibase = "0.9.1"
+p256 = "0.13.2"
 rand.workspace = true
 serde.workspace = true
 serde_json = { version = "1.0.140", features = ["alloc"] }

@@ -7,6 +7,9 @@ mod encryption;
 mod key;
 mod signing;
 
+use std::fmt::Display;
+
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
 pub use ed25519_dalek::PUBLIC_KEY_LENGTH;
@@ -49,4 +52,39 @@ pub enum Curve {
 
     /// secp256r1 curve.
     P256,
+}
+
+impl Curve {
+    /// Generate a new key for the given key type.
+    pub fn generate(&self) -> Vec<u8> {
+        match self {
+            Self::Ed25519 => {
+                let signing_key = ed25519_dalek::SigningKey::generate(&mut OsRng);
+                signing_key.as_bytes().to_vec()
+            }
+            Self::X25519 => {
+                let secret_key = x25519_dalek::StaticSecret::random_from_rng(OsRng);
+                secret_key.to_bytes().to_vec()
+            }
+            Self::Es256K => {
+                let (secret_key, _) = ecies::utils::generate_keypair();
+                secret_key.serialize().to_vec()
+            }
+            Self::P256 => {
+                let secret_key = p256::SecretKey::random(&mut OsRng);
+                secret_key.to_bytes().to_vec()
+            }
+        }
+    }
+}
+
+impl Display for Curve {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ed25519 => write!(f, "Ed25519"),
+            Self::X25519 => write!(f, "X25519"),
+            Self::Es256K => write!(f, "ES256K"),
+            Self::P256 => write!(f, "P256"),
+        }
+    }
 }
