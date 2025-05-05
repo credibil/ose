@@ -24,12 +24,6 @@ impl Mockstore {
         BLOCKSTORE.put_keyed(&cid, block).await.map_err(Into::into)
     }
 
-    pub async fn exists(&self, owner: &str, partition: &str, key: &str) -> Result<bool> {
-        let cid = unique_cid(owner, partition, key)?;
-        let exists = BLOCKSTORE.has(&cid).await?;
-        Ok(exists)
-    }
-
     pub async fn get(&self, owner: &str, partition: &str, key: &str) -> Result<Option<Vec<u8>>> {
         let cid = unique_cid(owner, partition, key)?;
         let Some(bytes) = BLOCKSTORE.get(&cid).await? else {

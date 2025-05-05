@@ -88,7 +88,7 @@ pub struct IndexEntry {
     pub owner: String,
 
     /// Keyring partition.
-    pub partition: KeyType,
+    pub partition: String,
 
     /// Name or ID of the key.
     pub id: String,
@@ -168,7 +168,7 @@ impl Keyring {
         self.blockstore.put("test", "", &id, &stored_key.to_bytes()).await?;
 
         // Update the index.
-        self.add_index_entry(key_type, id).await?;
+        self.add_index_entry(id).await?;
 
         Ok(())
     }
@@ -179,13 +179,14 @@ impl Keyring {
     /// # Errors
     /// Will return an error if the requested key does not exist in the keyring.
     /// (Use `add` instead).
-    pub async fn replace(&mut self, key_type: &KeyType, id: impl ToString) -> anyhow::Result<()> {
+    pub async fn replace(&mut self, id: impl ToString) -> anyhow::Result<()> {
         // Check for existence of the key
-        let exists = self.blockstore.exists("test", "", &id.to_string()).await?;
-        if !exists {
+        let existing = self.blockstore.get("test", "", &id.to_string()).await?;
+        let Some(existing) = existing else {
             bail!("key not found");
-        }
-        self.add(key_type, id).await
+        };
+        let existing = StoredKey::from_bytes(&existing)?;
+        self.add(&existing.key_type, id).await
     }
 
     /// Rotate all keys in the keyring.
@@ -201,7 +202,6 @@ impl Keyring {
             .ok_or(anyhow!("index not found"))?;
         let mut index = KeyringIndex::from_bytes(&index_bytes)?;
         for entry in &mut index.0 {
-            let key_type = &entry.partition;
             let id = &entry.id;
 
             let current_key = self
@@ -210,9 +210,9 @@ impl Keyring {
                 .await?
                 .ok_or(anyhow!("key not found"))?;
             let current_key = StoredKey::from_bytes(&current_key)?;
-            let next_key = key_type.generate();
+            let next_key = current_key.key_type.generate();
             let new_key = StoredKey {
-                key_type: key_type.clone(),
+                key_type: current_key.key_type.clone(),
                 key: current_key.next_key,
                 next_key,
             };
@@ -225,16 +225,16 @@ impl Keyring {
     ///
     /// # Errors
     /// Will return an error if the requested key does not exist in the keyring.
-    pub async fn rotate(&mut self, key_type: &KeyType, id: impl ToString) -> anyhow::Result<()> {
+    pub async fn rotate(&mut self, id: impl ToString) -> anyhow::Result<()> {
         let current_key = self
             .blockstore
             .get("test", "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let current_key = StoredKey::from_bytes(&current_key)?;
-        let next_key = key_type.generate();
+        let next_key = current_key.key_type.generate();
         let new_key = StoredKey {
-            key_type: key_type.clone(),
+            key_type: current_key.key_type.clone(),
             key: current_key.next_key,
             next_key,
         };
@@ -248,9 +248,9 @@ impl Keyring {
     /// # Errors
     /// Will return an error if the requested key cannot be removed from storage
     /// or the index cannot be updated.
-    pub async fn remove(&mut self, key_type: &KeyType, id: impl ToString) -> anyhow::Result<()> {
+    pub async fn remove(&mut self, id: impl ToString) -> anyhow::Result<()> {
         self.blockstore.delete("test", "", &id.to_string()).await?;
-        self.remove_index_entry(key_type, id).await
+        self.remove_index_entry(id).await
     }
 
     /// Get a public key from the keyring with the given type and ID.
@@ -258,16 +258,14 @@ impl Keyring {
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
     /// storage or if the public key cannot be inferred from the private key.
-    pub async fn public_key(
-        &mut self, key_type: &KeyType, id: impl ToString,
-    ) -> anyhow::Result<PublicKey> {
+    pub async fn public_key(&self, id: impl ToString) -> anyhow::Result<PublicKey> {
         let stored_key = self
             .blockstore
             .get("test", "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
-        match key_type {
+        match stored_key.key_type {
             KeyType::EdDSA => {
                 let signing_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
                     .key
@@ -306,11 +304,11 @@ impl Keyring {
     /// # Errors
     /// Will return an error if the index cannot be updated.
     async fn add_index_entry(
-        &mut self, key_type: &KeyType, id: impl ToString,
+        &mut self, id: impl ToString,
     ) -> anyhow::Result<()> {
         let entry = IndexEntry {
             owner: "test".to_string(),
-            partition: key_type.clone(),
+            partition: "".to_string(),
             id: id.to_string(),
         };
         let mut index = KeyringIndex::from_bytes(
@@ -329,11 +327,11 @@ impl Keyring {
     /// # Errors
     /// Will return an error if the index cannot be updated.
     async fn remove_index_entry(
-        &mut self, key_type: &KeyType, id: impl ToString,
+        &mut self, id: impl ToString,
     ) -> anyhow::Result<()> {
         let entry = IndexEntry {
             owner: "test".to_string(),
-            partition: key_type.clone(),
+            partition: "".to_string(),
             id: id.to_string(),
         };
         let mut index = KeyringIndex::from_bytes(
@@ -357,60 +355,44 @@ mod tests {
         let mut keyring = Keyring::new().await.expect("keyring created");
 
         // Create an Ed25519 key
-        let key_type = KeyType::EdDSA;
-        let id = "one";
-        keyring.add(&key_type, id).await.expect("Ed25519 key added");
+        keyring.add(&KeyType::EdDSA, "one").await.expect("Ed25519 key added");
 
         // Get the public key for the Ed25519 key.
-        let _ = keyring.public_key(&key_type, id).await.expect("Ed25519 key retrieved");
+        let _ = keyring.public_key("one").await.expect("Ed25519 key retrieved");
 
         // Create an X25519 key
-        let key_type = KeyType::X25519;
-        let id = "two";
-        keyring.add(&key_type, id).await.expect("key added");
+        keyring.add(&KeyType::X25519, "two").await.expect("key added");
 
         // Get the public key for the X25519 key.
-        let _ = keyring.public_key(&key_type, id).await.expect("X25519 key retrieved");
+        let _ = keyring.public_key("two").await.expect("X25519 key retrieved");
 
         // Create an ES256k key
-        let key_type = KeyType::Es256k;
-        let id = "three";
-        keyring.add(&key_type, id).await.expect("key added");
+        keyring.add(&KeyType::Es256k, "three").await.expect("key added");
 
         // Get the public key for the ES256k key.
-        let _ = keyring.public_key(&key_type, id).await.expect("ES256k key retrieved");
+        let _ = keyring.public_key("three").await.expect("ES256k key retrieved");
 
         // Rotate all the keys
         keyring.rotate_all().await.expect("all keys rotated");
 
         // Rotate the Ed25519 key
-        let key_type = KeyType::EdDSA;
-        let id = "one";
-        keyring.rotate(&key_type, id).await.expect("Ed25519 key rotated");
+        keyring.rotate("one").await.expect("Ed25519 key rotated");
 
         // Replace the X25519 key
-        let key_type = KeyType::X25519;
-        let id = "two";
-        keyring.replace(&key_type, id).await.expect("X25519 key replaced");
+        keyring.replace("two").await.expect("X25519 key replaced");
 
         // Remove the Ed25519 key
-        let key_type = KeyType::EdDSA;
-        let id = "one";
-        keyring.remove(&key_type, id).await.expect("Ed25519 key removed");
+        keyring.remove("one").await.expect("Ed25519 key removed");
 
         // Remove the X25519 key
-        let key_type = KeyType::X25519;
-        let id = "two";
-        keyring.remove(&key_type, id).await.expect("X25519 key removed");
+        keyring.remove("two").await.expect("X25519 key removed");
 
         // Remove the ES256k key
-        let key_type = KeyType::Es256k;
-        let id = "three";
-        keyring.remove(&key_type, id).await.expect("ES256k key removed");
+        keyring.remove("three").await.expect("ES256k key removed");
 
         // Check that the keys are removed
-        let key_type = KeyType::EdDSA;
-        let id = "one";
-        assert!(keyring.public_key(&key_type, id).await.is_err());
+        assert!(keyring.public_key("one").await.is_err());
+        assert!(keyring.public_key("two").await.is_err());
+        assert!(keyring.public_key("three").await.is_err());
     }
 }
