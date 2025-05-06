@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail};
 use blockstore::Mockstore;
 use credibil_ose::{Curve, PublicKey, Receiver, SecretKey, SharedSecret, PUBLIC_KEY_LENGTH};
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 
 /// Key as serialized and stored to the blob store.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -209,7 +210,10 @@ impl Keyring {
         self.remove_index_entry(id).await
     }
 
-    /// Get a public key from the keyring with the given ID.
+    /// Get a public key for encryption from the keyring with the given ID.
+    /// 
+    /// Use `verifying_key` to get a public key for verifying a signature
+    /// (assuming the key is from an appropriate curve).
     ///
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
@@ -258,7 +262,10 @@ impl Keyring {
         }
     }
 
-    /// Get the private key from the keyring with the given ID.
+    /// Get the private key for encryption from the keyring with the given ID.
+    /// 
+    /// Use `signing_key` to get a private key for signing (assuming the key is
+    /// from an appropriate curve).
     /// 
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
@@ -270,10 +277,21 @@ impl Keyring {
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
-        let secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
+        let mut secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
             .key
             .try_into()
             .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+
+        // If the key is Ed25519 we need to convert it to a X25519 key.
+        if matches!(stored_key.curve, Curve::Ed25519) {
+            let signing_key = ed25519_dalek::SigningKey::try_from(&secret_key_bytes)?;
+            let hash = sha2::Sha512::digest(signing_key.as_bytes());
+            let mut hashed = [0u8; PUBLIC_KEY_LENGTH];
+            hashed.copy_from_slice(&hash[0..PUBLIC_KEY_LENGTH]);
+
+            secret_key_bytes = x25519_dalek::StaticSecret::from(hashed).to_bytes();
+        }
+
         let secret_key = SecretKey::from(secret_key_bytes);
         Ok(secret_key)
     }

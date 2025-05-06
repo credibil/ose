@@ -121,7 +121,7 @@ impl EncAlgorithm {
                 let tag = Tag::from_slice(tag);
                 Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(cek))
                     .decrypt_in_place_detached(nonce, aad, &mut buffer, tag)
-                    .map_err(|e| anyhow!("issue decrypting: {e}"))?;
+                    .map_err(|e| anyhow!("issue decrypting payload: {e}"))?;
                 Ok(buffer)
             }
             Self::XChaCha20Poly1305 => {
@@ -238,7 +238,7 @@ impl AlgAlgorithm {
 
                 Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(shared_secret.as_bytes()))
                     .decrypt_in_place_detached(nonce, &[], &mut buffer, tag)
-                    .map_err(|e| anyhow!("issue decrypting: {e}"))?;
+                    .map_err(|e| anyhow!("issue decrypting CEK: {e}"))?;
 
                 buffer.try_into().map_err(|_| anyhow!("issue unwrapping cek"))
             }

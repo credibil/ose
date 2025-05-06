@@ -1326,6 +1326,7 @@ dependencies = [
  "multihash-codetable",
  "rand",
  "serde",
+ "sha2",
  "tokio",
  "x25519-dalek",
 ]
