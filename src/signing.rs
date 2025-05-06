@@ -71,5 +71,5 @@ pub trait Signer: Send + Sync {
     fn verifying_key(&self) -> impl Future<Output = anyhow::Result<Vec<u8>>> + Send;
 
     /// Signature algorithm used by the signer.
-    fn algorithm(&self) -> Algorithm;
+    fn algorithm(&self) -> impl Future<Output = anyhow::Result<Algorithm>> + Send;
 }

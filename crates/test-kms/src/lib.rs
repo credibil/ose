@@ -4,7 +4,8 @@ mod blockstore;
 
 use anyhow::{anyhow, bail};
 use blockstore::Mockstore;
-use credibil_ose::{Curve, PublicKey, Receiver, SecretKey, SharedSecret, PUBLIC_KEY_LENGTH};
+use credibil_ose::{Algorithm, Curve, PublicKey, Receiver, SecretKey, SharedSecret, Signer, PUBLIC_KEY_LENGTH};
+use ed25519_dalek::Signer as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
@@ -93,6 +94,8 @@ pub struct Keyring {
     blockstore: Mockstore,
 }
 
+// TODO: The API for a production keyring should include owner, partition and
+// optional version to dereference a key, not just an ID
 impl Keyring {
     /// Create a new keyring and initialize a block for key indexes.
     ///
@@ -264,9 +267,6 @@ impl Keyring {
 
     /// Get the private key for encryption from the keyring with the given ID.
     /// 
-    /// Use `signing_key` to get a private key for signing (assuming the key is
-    /// from an appropriate curve).
-    /// 
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
     /// storage or cannot be converted from the stored bytes.
@@ -294,6 +294,90 @@ impl Keyring {
 
         let secret_key = SecretKey::from(secret_key_bytes);
         Ok(secret_key)
+    }
+
+    /// Get the curve for the keyring key with the given ID.
+    /// 
+    /// # Errors
+    /// Will return an error if the requested key cannot be retrieved from
+    /// storage.
+    pub (crate) async fn curve(&self, id: impl ToString) -> anyhow::Result<Curve> {
+        let stored_key = self
+            .blockstore
+            .get("test", "", &id.to_string())
+            .await?
+            .ok_or(anyhow!("key not found"))?;
+        let stored_key = StoredKey::from_bytes(&stored_key)?;
+        Ok(stored_key.curve)
+    }
+
+    /// Sign a message with the keyring key with the given ID.
+    /// 
+    /// # Errors
+    /// Will return an error if the requested key cannot be retrieved from
+    /// storage or if the key cannot be converted to a signing key (including
+    /// if the key is not a signing key or the key's algorithm is not currently
+    /// supported).
+    pub (crate) async fn sign(&self, id: impl ToString, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
+        let stored_key = self
+            .blockstore
+            .get("test", "", &id.to_string())
+            .await?
+            .ok_or(anyhow!("key not found"))?;
+        let stored_key = StoredKey::from_bytes(&stored_key)?;
+        match stored_key.curve {
+            Curve::Ed25519 => {
+                let signing_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
+                    .key
+                    .try_into()
+                    .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+                let signing_key = ed25519_dalek::SigningKey::try_from(&signing_key_bytes)?;
+                return Ok(signing_key.sign(msg).to_bytes().to_vec());
+            }
+            Curve::X25519 => {
+                bail!("X25519 cannot be used for signing");
+            }
+            Curve::Es256K => {
+                bail!("ES256K cannot be used for signing");
+            }
+            Curve::P256 => {
+                unimplemented!("P256 not implemented yet");
+            }
+        }
+    }
+
+    /// Get the verifying key for the keyring key with the given ID.
+    /// 
+    /// # Errors
+    /// Will return an error if the requested key cannot be retrieved from
+    /// storage or if the key cannot be converted to a signing key (including
+    /// if the key's algorithm is not currently supported).
+    pub (crate) async fn verifying_key(&self, id: impl ToString) -> anyhow::Result<Vec<u8>> {
+        let stored_key = self
+            .blockstore
+            .get("test", "", &id.to_string())
+            .await?
+            .ok_or(anyhow!("key not found"))?;
+        let stored_key = StoredKey::from_bytes(&stored_key)?;
+        match stored_key.curve {
+            Curve::Ed25519 => {
+                let signing_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
+                    .key
+                    .try_into()
+                    .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+                let signing_key = ed25519_dalek::SigningKey::try_from(&signing_key_bytes)?;
+                return Ok(signing_key.verifying_key().to_bytes().to_vec());
+            }
+            Curve::X25519 => {
+                bail!("X25519 cannot be used for signing");
+            }
+            Curve::Es256K => {
+                bail!("ES256K cannot be used for signing");
+            }
+            Curve::P256 => {
+                unimplemented!("P256 not implemented yet");
+            }
+        }
     }
 
     /// Add an entry to the keyring index.
@@ -344,6 +428,8 @@ impl Keyring {
 }
 
 /// A struct to manage which key in the keyring is used as the receiver's key.
+/// TODO: A fuller implementation would need to include owner and partition
+/// information.
 pub struct KeyringReceiver {
     /// The key ID of the receiver.
     pub key_id: String,
@@ -374,6 +460,51 @@ impl Receiver for KeyringReceiver {
     ) -> anyhow::Result<SharedSecret> {
         let sk = self.keyring.private_key(&self.key_id).await?;
         sk.shared_secret(sender_public)
+    }
+}
+
+/// A struct to manage with key in the keyring is used for signing.
+/// TODO: A fuller implementation would need to include owner and partition
+/// information and would need to deal with key versions.
+pub struct KeyringSigner {
+    /// The key ID for the signing key.
+    pub key_id: String,
+
+    /// The keyring to get the key from for signing.
+    pub keyring: Keyring,
+}
+
+impl KeyringSigner {
+    /// Create a new keyring signer.
+    #[must_use]
+    pub fn new(key_id: impl ToString, keyring: Keyring) -> Self {
+        Self {
+            key_id: key_id.to_string(),
+            keyring,
+        }
+    }
+}
+
+/// Signer implementation for the keyring for signing.
+impl Signer for KeyringSigner {
+    async fn try_sign(&self, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
+        self.keyring.sign(&self.key_id, msg).await
+    }
+
+    async fn verifying_key(&self) -> anyhow::Result<Vec<u8>> {
+        self.keyring.verifying_key(&self.key_id).await
+    }
+
+    async fn algorithm(&self) -> anyhow::Result<Algorithm> {
+        let curve = self.keyring.curve(&self.key_id).await?;
+        let algorithm = match curve {
+            Curve::Ed25519 => Algorithm::EdDSA,
+            Curve::Es256K => Algorithm::ES256K,
+            _ => {
+                bail!("unsupported algorithm for signing")
+            }
+        };
+        Ok(algorithm)
     }
 }
 
