@@ -328,3 +328,44 @@ pub struct EncryptedCek {
     /// Authentication tag if applicable to the algorithm.
     pub tag: Option<Vec<u8>>,
 }
+
+#[cfg(test)]
+mod tests {
+    use base64ct::{Base64UrlUnpadded, Encoding};
+    use sha2::Digest;
+
+    use super::*;
+
+    // derive X25519 keypair from Ed25519 keypair (reverse of XEdDSA)
+    // XEdDSA resources:
+    // - https://signal.org/docs/specifications/xeddsa
+    // - https://github.com/Zentro/lambx
+    // - https://codeberg.org/SpotNuts/xeddsa
+    #[test]
+    fn edx25519() {
+        const ALICE_SECRET: &str = "8rmFFiUcTjjrL5mgBzWykaH39D64VD0mbDHwILvsu30";
+        const ALICE_PUBLIC: &str = "RW-Q0fO2oECyLs4rZDZZo4p6b7pu7UF2eu9JBsktDco";
+
+        let alice_secret: [u8; PUBLIC_KEY_LENGTH] =
+            Base64UrlUnpadded::decode_vec(ALICE_SECRET).unwrap().try_into().unwrap();
+        let alice_public: [u8; PUBLIC_KEY_LENGTH] =
+            Base64UrlUnpadded::decode_vec(ALICE_PUBLIC).unwrap().try_into().unwrap();
+
+        let ephemeral_secret = x25519_dalek::EphemeralSecret::random_from_rng(rand::thread_rng());
+        let ephemeral_public = x25519_dalek::PublicKey::from(&ephemeral_secret);
+
+        // SENDER: diffie-hellman using Alice public -> montgomery
+        let alice_verifier = ed25519_dalek::VerifyingKey::from_bytes(&alice_public).unwrap();
+        let alice_montgomery = alice_verifier.to_montgomery();
+        let ephemeral_dh = ephemeral_secret.diffie_hellman(&alice_montgomery.to_bytes().into());
+
+        // RECEIVER: diffie-hellman using ephemeral public
+        let hash = sha2::Sha512::digest(&alice_secret);
+        let mut hashed = [0u8; PUBLIC_KEY_LENGTH];
+        hashed.copy_from_slice(&hash[..PUBLIC_KEY_LENGTH]);
+        let alice_x_secret = x25519_dalek::StaticSecret::from(hashed);
+        let alice_dh = alice_x_secret.diffie_hellman(&ephemeral_public);
+
+        assert_eq!(ephemeral_dh.as_bytes(), alice_dh.as_bytes());
+    }
+}
