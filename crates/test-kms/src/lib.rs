@@ -4,7 +4,9 @@ mod blockstore;
 
 use anyhow::{anyhow, bail};
 use blockstore::Mockstore;
-use credibil_ose::{Algorithm, Curve, PublicKey, Receiver, SecretKey, SharedSecret, Signer, PUBLIC_KEY_LENGTH};
+use credibil_ose::{
+    Algorithm, Curve, PUBLIC_KEY_LENGTH, PublicKey, Receiver, SecretKey, SharedSecret, Signer,
+};
 use ed25519_dalek::Signer as _;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -164,11 +166,8 @@ impl Keyring {
         for entry in &mut index.0 {
             let id = &entry.id;
 
-            let current_key = self
-                .blockstore
-                .get("test", "", id)
-                .await?
-                .ok_or(anyhow!("key not found"))?;
+            let current_key =
+                self.blockstore.get("test", "", id).await?.ok_or(anyhow!("key not found"))?;
             let current_key = StoredKey::from_bytes(&current_key)?;
             let next_key = current_key.curve.generate();
             let new_key = StoredKey {
@@ -198,9 +197,7 @@ impl Keyring {
             key: current_key.next_key,
             next_key,
         };
-        self.blockstore
-            .put("test", "", &id.to_string(), &new_key.to_bytes())
-            .await
+        self.blockstore.put("test", "", &id.to_string(), &new_key.to_bytes()).await
     }
 
     /// Remove a key from the keyring.
@@ -214,7 +211,7 @@ impl Keyring {
     }
 
     /// Get a public key for encryption from the keyring with the given ID.
-    /// 
+    ///
     /// Use `verifying_key` to get a public key for verifying a signature
     /// (assuming the key is from an appropriate curve).
     ///
@@ -235,7 +232,7 @@ impl Keyring {
                     .try_into()
                     .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
                 let signing_key = ed25519_dalek::SigningKey::try_from(&signing_key_bytes)?;
-                let verifying_key = signing_key.verifying_key();    
+                let verifying_key = signing_key.verifying_key();
                 let public_key =
                     x25519_dalek::PublicKey::from(verifying_key.to_montgomery().to_bytes());
                 Ok(PublicKey::from(public_key))
@@ -266,21 +263,19 @@ impl Keyring {
     }
 
     /// Get the private key for encryption from the keyring with the given ID.
-    /// 
+    ///
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
     /// storage or cannot be converted from the stored bytes.
-    pub (crate) async fn private_key(&self, id: impl ToString) -> anyhow::Result<SecretKey> {
+    pub(crate) async fn private_key(&self, id: impl ToString) -> anyhow::Result<SecretKey> {
         let stored_key = self
             .blockstore
             .get("test", "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
-        let mut secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
-            .key
-            .try_into()
-            .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+        let mut secret_key_bytes: [u8; PUBLIC_KEY_LENGTH] =
+            stored_key.key.try_into().map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
 
         // If the key is Ed25519 we need to convert it to a X25519 key.
         if matches!(stored_key.curve, Curve::Ed25519) {
@@ -297,11 +292,11 @@ impl Keyring {
     }
 
     /// Get the curve for the keyring key with the given ID.
-    /// 
+    ///
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
     /// storage.
-    pub (crate) async fn curve(&self, id: impl ToString) -> anyhow::Result<Curve> {
+    pub(crate) async fn curve(&self, id: impl ToString) -> anyhow::Result<Curve> {
         let stored_key = self
             .blockstore
             .get("test", "", &id.to_string())
@@ -312,13 +307,13 @@ impl Keyring {
     }
 
     /// Sign a message with the keyring key with the given ID.
-    /// 
+    ///
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
     /// storage or if the key cannot be converted to a signing key (including
     /// if the key is not a signing key or the key's algorithm is not currently
     /// supported).
-    pub (crate) async fn sign(&self, id: impl ToString, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
+    pub(crate) async fn sign(&self, id: impl ToString, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
         let stored_key = self
             .blockstore
             .get("test", "", &id.to_string())
@@ -347,24 +342,44 @@ impl Keyring {
     }
 
     /// Get the verifying key for the keyring key with the given ID.
-    /// 
+    ///
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
     /// storage or if the key cannot be converted to a signing key (including
     /// if the key's algorithm is not currently supported).
     pub async fn verifying_key(&self, id: impl ToString) -> anyhow::Result<Vec<u8>> {
-        let stored_key = self
-            .blockstore
-            .get("test", "", &id.to_string())
-            .await?
-            .ok_or(anyhow!("key not found"))?;
+        self.vk(&id.to_string(), false).await
+    }
+
+    /// Get the next verifying key on key rotation for the key with the given ID.
+    ///
+    /// # Errors
+    /// Will return an error if the requested key cannot be retrieved from
+    /// storage or if the key cannot be converted to a signing key (including
+    /// if the key's algorithm is not currently supported).
+    pub async fn next_verifying_key(&self, id: impl ToString) -> anyhow::Result<Vec<u8>> {
+        self.vk(&id.to_string(), true).await
+    }
+
+    // Get a verifying key for the keyring key with the given ID if possible.
+    // Return the current or next key depending on the flag.
+    async fn vk(&self, id: &str, next: bool) -> anyhow::Result<Vec<u8>> {
+        let stored_key =
+            self.blockstore.get("test", "", id).await?.ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
         match stored_key.curve {
             Curve::Ed25519 => {
-                let signing_key_bytes: [u8; PUBLIC_KEY_LENGTH] = stored_key
-                    .key
-                    .try_into()
-                    .map_err(|_| anyhow!("cannot convert stored vec to slice"))?;
+                let signing_key_bytes: [u8; PUBLIC_KEY_LENGTH] = if next {
+                    stored_key
+                        .next_key
+                        .try_into()
+                        .map_err(|_| anyhow!("cannot convert stored vec to slice"))?
+                } else {
+                    stored_key
+                        .key
+                        .try_into()
+                        .map_err(|_| anyhow!("cannot convert stored vec to slice"))?
+                };
                 let signing_key = ed25519_dalek::SigningKey::try_from(&signing_key_bytes)?;
                 return Ok(signing_key.verifying_key().to_bytes().to_vec());
             }
@@ -384,9 +399,7 @@ impl Keyring {
     ///
     /// # Errors
     /// Will return an error if the index cannot be updated.
-    async fn add_index_entry(
-        &mut self, id: impl ToString,
-    ) -> anyhow::Result<()> {
+    async fn add_index_entry(&mut self, id: impl ToString) -> anyhow::Result<()> {
         let entry = IndexEntry {
             owner: "test".to_string(),
             partition: "".to_string(),
@@ -407,9 +420,7 @@ impl Keyring {
     ///
     /// # Errors
     /// Will return an error if the index cannot be updated.
-    async fn remove_index_entry(
-        &mut self, id: impl ToString,
-    ) -> anyhow::Result<()> {
+    async fn remove_index_entry(&mut self, id: impl ToString) -> anyhow::Result<()> {
         let entry = IndexEntry {
             owner: "test".to_string(),
             partition: "".to_string(),
@@ -455,9 +466,7 @@ impl Receiver for KeyringReceiver {
         self.key_id.clone()
     }
 
-    async fn shared_secret(
-        &self, sender_public: PublicKey,
-    ) -> anyhow::Result<SharedSecret> {
+    async fn shared_secret(&self, sender_public: PublicKey) -> anyhow::Result<SharedSecret> {
         let sk = self.keyring.private_key(&self.key_id).await?;
         sk.shared_secret(sender_public)
     }
