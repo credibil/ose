@@ -296,7 +296,7 @@ impl Keyring {
     /// # Errors
     /// Will return an error if the requested key cannot be retrieved from
     /// storage.
-    pub(crate) async fn curve(&self, id: impl ToString) -> anyhow::Result<Curve> {
+    pub async fn curve(&self, id: impl ToString) -> anyhow::Result<Curve> {
         let stored_key = self
             .blockstore
             .get("test", "", &id.to_string())
@@ -313,7 +313,7 @@ impl Keyring {
     /// storage or if the key cannot be converted to a signing key (including
     /// if the key is not a signing key or the key's algorithm is not currently
     /// supported).
-    pub(crate) async fn sign(&self, id: impl ToString, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
+    pub async fn sign(&self, id: impl ToString, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
         let stored_key = self
             .blockstore
             .get("test", "", &id.to_string())
