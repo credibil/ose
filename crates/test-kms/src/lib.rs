@@ -352,7 +352,7 @@ impl Keyring {
     /// Will return an error if the requested key cannot be retrieved from
     /// storage or if the key cannot be converted to a signing key (including
     /// if the key's algorithm is not currently supported).
-    pub (crate) async fn verifying_key(&self, id: impl ToString) -> anyhow::Result<Vec<u8>> {
+    pub async fn verifying_key(&self, id: impl ToString) -> anyhow::Result<Vec<u8>> {
         let stored_key = self
             .blockstore
             .get("test", "", &id.to_string())
