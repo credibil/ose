@@ -443,10 +443,10 @@ impl Keyring {
 /// information.
 pub struct KeyringReceiver {
     /// The key ID of the receiver.
-    pub key_id: String,
+    key_id: String,
 
     /// The keyring to use for encryption.
-    pub keyring: Keyring,
+    keyring: Keyring,
 }
 
 impl KeyringReceiver {
@@ -477,10 +477,10 @@ impl Receiver for KeyringReceiver {
 /// information and would need to deal with key versions.
 pub struct KeyringSigner {
     /// The key ID for the signing key.
-    pub key_id: String,
+    key_id: String,
 
     /// The keyring to get the key from for signing.
-    pub keyring: Keyring,
+    keyring: Keyring,
 }
 
 impl KeyringSigner {
