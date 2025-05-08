@@ -2,7 +2,10 @@
 
 use anyhow::anyhow;
 use base64ct::{Base64UrlUnpadded, Encoding};
+use ed25519_dalek::VerifyingKey;
 use zeroize::{Zeroize, ZeroizeOnDrop};
+
+use crate::PUBLIC_KEY_LENGTH;
 
 /// Prefix bytes (tag) to indicate a full public key.
 pub const TAG_PUBKEY_FULL: u8 = 0x04;
@@ -234,4 +237,17 @@ impl TryFrom<PublicKey> for ecies::PublicKey {
             val.to_vec().try_into().map_err(|_| anyhow!("issue converting public key to array"))?;
         Self::parse(&key).map_err(|e| anyhow!("issue parsing public key: {e}"))
     }
+}
+
+/// Derive a `X25519` public key from an `Ed25519` public key.
+/// 
+/// # Errors
+/// If the provided input is the wrong length or cannot be converted to an
+/// Ed25519 verifying key an error will be returned.
+pub fn derive_x25519(ed25519_pubkey: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let verifier_bytes: [u8; PUBLIC_KEY_LENGTH] =
+        ed25519_pubkey.try_into().map_err(|_| anyhow!("unable to coerce vec to slice"))?;
+    let verifier = VerifyingKey::from_bytes(&verifier_bytes)?;
+    let x25519_bytes = verifier.to_montgomery().to_bytes();
+    Ok(x25519_bytes.to_vec())
 }
