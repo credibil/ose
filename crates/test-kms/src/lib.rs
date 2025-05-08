@@ -117,9 +117,12 @@ impl Keyring {
     ///
     /// # Errors
     /// Will return an error if the storage fails or the index cannot be
-    /// updated.
+    /// updated. Will also return an error if the key already exists (use
+    /// `replace` instead).
     pub async fn add(&mut self, curve: &Curve, id: impl ToString) -> anyhow::Result<()> {
-        let id = id.to_string();
+        if self.blockstore.exists("test", "", &id.to_string()).await? {
+            bail!("key already exists");
+        }
         let key_bytes = curve.generate();
         let next_key_bytes = curve.generate();
         let stored_key = StoredKey {
@@ -127,7 +130,7 @@ impl Keyring {
             key: key_bytes.clone(),
             next_key: next_key_bytes.clone(),
         };
-        self.blockstore.put("test", "", &id, &stored_key.to_bytes()).await?;
+        self.blockstore.put("test", "", &id.to_string(), &stored_key.to_bytes()).await?;
 
         // Update the index.
         self.add_index_entry(id).await?;
@@ -148,6 +151,7 @@ impl Keyring {
             bail!("key not found");
         };
         let existing = StoredKey::from_bytes(&existing)?;
+        self.blockstore.delete("test", "", &id.to_string()).await?;
         self.add(&existing.curve, id).await
     }
 
@@ -175,6 +179,7 @@ impl Keyring {
                 key: current_key.next_key,
                 next_key,
             };
+            self.blockstore.delete("test", "", id).await?;
             self.blockstore.put("test", "", id, &new_key.to_bytes()).await?;
         }
         Ok(())
@@ -197,6 +202,7 @@ impl Keyring {
             key: current_key.next_key,
             next_key,
         };
+        self.blockstore.delete("test", "", &id.to_string()).await?;
         self.blockstore.put("test", "", &id.to_string(), &new_key.to_bytes()).await
     }
 
@@ -565,5 +571,19 @@ mod tests {
         assert!(keyring.public_key("one").await.is_err());
         assert!(keyring.public_key("two").await.is_err());
         assert!(keyring.public_key("three").await.is_err());
+    }
+
+    // Test that when a key is rotated, the previous next key is the current
+    // key.
+    #[tokio::test]
+    async fn key_rotation() {
+        let mut keyring = Keyring::new().await.expect("keyring created");
+        keyring.add(&Curve::Ed25519, "one").await.expect("key added");
+        let next_verifying_key =
+            keyring.next_verifying_key("one").await.expect("next verifying key retrieved");
+        // Rotate the key
+        keyring.rotate("one").await.expect("key rotated");
+        let verifying_key = keyring.verifying_key("one").await.expect("verifying key retrieved");
+        assert_eq!(next_verifying_key, verifying_key);
     }
 }
