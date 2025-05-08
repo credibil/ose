@@ -421,6 +421,7 @@ impl Keyring {
                 .ok_or(anyhow!("index not found"))?,
         )?;
         index.add(entry);
+        self.blockstore.delete(&self.owner, "keyring", "index").await?;
         self.blockstore.put(&self.owner, "keyring", "index", &index.to_bytes()).await
     }
 
@@ -442,6 +443,7 @@ impl Keyring {
                 .ok_or(anyhow!("index not found"))?,
         )?;
         index.remove(&entry);
+        self.blockstore.delete(&self.owner, "keyring", "index").await?;
         self.blockstore.put(&self.owner, "keyring", "index", &index.to_bytes()).await
     }
 }
@@ -587,5 +589,29 @@ mod tests {
         keyring.rotate("one").await.expect("key rotated");
         let verifying_key = keyring.verifying_key("one").await.expect("verifying key retrieved");
         assert_eq!(next_verifying_key, verifying_key);
+    }
+
+    // Test that when all keys are rotated, the previous next key is the current
+    // key.
+    #[tokio::test]
+    async fn all_key_rotation() {
+        let mut keyring = Keyring::new("all_key_rotation").await.expect("keyring created");
+        keyring.add(&Curve::Ed25519, "one").await.expect("key added");
+        keyring.add(&Curve::Ed25519, "two").await.expect("key added");
+        keyring.add(&Curve::Ed25519, "three").await.expect("key added");
+        let next_verifying_key1 =
+            keyring.next_verifying_key("one").await.expect("next verifying key retrieved");
+        let next_verifying_key2 =
+            keyring.next_verifying_key("two").await.expect("next verifying key retrieved");
+        let next_verifying_key3 =
+            keyring.next_verifying_key("three").await.expect("next verifying key retrieved");
+        // Rotate all keys
+        keyring.rotate_all().await.expect("all keys rotated");
+        let verifying_key1 = keyring.verifying_key("one").await.expect("verifying key retrieved");
+        let verifying_key2 = keyring.verifying_key("two").await.expect("verifying key retrieved");
+        let verifying_key3 = keyring.verifying_key("three").await.expect("verifying key retrieved");
+        assert_eq!(next_verifying_key1, verifying_key1);
+        assert_eq!(next_verifying_key2, verifying_key2);
+        assert_eq!(next_verifying_key3, verifying_key3);
     }
 }
