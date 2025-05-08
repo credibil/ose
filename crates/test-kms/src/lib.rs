@@ -93,24 +93,26 @@ impl KeyringIndex {
 /// Suitable for testing only.
 #[derive(Clone)]
 pub struct Keyring {
+    owner: String,
     blockstore: Mockstore,
 }
 
-// TODO: The API for a production keyring should include owner, partition and
-// optional version to dereference a key, not just an ID
+// TODO: The API for a production keyring should include partition and optional
+// version to dereference a key, not just an ID
 impl Keyring {
     /// Create a new keyring and initialize a block for key indexes.
     ///
     /// # Errors
     /// Will return an error if storage of an index block fails.
     #[must_use]
-    pub async fn new() -> anyhow::Result<Self> {
+    pub async fn new(owner: impl ToString) -> anyhow::Result<Self> {
+        let owner = owner.to_string();
         let blockstore = Mockstore::new();
         let index = KeyringIndex::new();
         let index_bytes = index.to_bytes();
-        blockstore.put("test", "keyring", "index", &index_bytes).await?;
+        blockstore.put(&owner, "keyring", "index", &index_bytes).await?;
 
-        Ok(Self { blockstore })
+        Ok(Self { owner, blockstore })
     }
 
     /// Add a newly generated key and a corresponding next key to the keyring.
@@ -120,7 +122,7 @@ impl Keyring {
     /// updated. Will also return an error if the key already exists (use
     /// `replace` instead).
     pub async fn add(&mut self, curve: &Curve, id: impl ToString) -> anyhow::Result<()> {
-        if self.blockstore.exists("test", "", &id.to_string()).await? {
+        if self.blockstore.exists(&self.owner, "", &id.to_string()).await? {
             bail!("key already exists");
         }
         let key_bytes = curve.generate();
@@ -130,7 +132,7 @@ impl Keyring {
             key: key_bytes.clone(),
             next_key: next_key_bytes.clone(),
         };
-        self.blockstore.put("test", "", &id.to_string(), &stored_key.to_bytes()).await?;
+        self.blockstore.put(&self.owner, "", &id.to_string(), &stored_key.to_bytes()).await?;
 
         // Update the index.
         self.add_index_entry(id).await?;
@@ -146,12 +148,12 @@ impl Keyring {
     /// (Use `add` instead).
     pub async fn replace(&mut self, id: impl ToString) -> anyhow::Result<()> {
         // Check for existence of the key
-        let existing = self.blockstore.get("test", "", &id.to_string()).await?;
+        let existing = self.blockstore.get(&self.owner, "", &id.to_string()).await?;
         let Some(existing) = existing else {
             bail!("key not found");
         };
         let existing = StoredKey::from_bytes(&existing)?;
-        self.blockstore.delete("test", "", &id.to_string()).await?;
+        self.blockstore.delete(&self.owner, "", &id.to_string()).await?;
         self.add(&existing.curve, id).await
     }
 
@@ -163,7 +165,7 @@ impl Keyring {
     pub async fn rotate_all(&mut self) -> anyhow::Result<()> {
         let index_bytes = self
             .blockstore
-            .get("test", "keyring", "index")
+            .get(&self.owner, "keyring", "index")
             .await?
             .ok_or(anyhow!("index not found"))?;
         let mut index = KeyringIndex::from_bytes(&index_bytes)?;
@@ -171,7 +173,7 @@ impl Keyring {
             let id = &entry.id;
 
             let current_key =
-                self.blockstore.get("test", "", id).await?.ok_or(anyhow!("key not found"))?;
+                self.blockstore.get(&self.owner, "", id).await?.ok_or(anyhow!("key not found"))?;
             let current_key = StoredKey::from_bytes(&current_key)?;
             let next_key = current_key.curve.generate();
             let new_key = StoredKey {
@@ -179,8 +181,8 @@ impl Keyring {
                 key: current_key.next_key,
                 next_key,
             };
-            self.blockstore.delete("test", "", id).await?;
-            self.blockstore.put("test", "", id, &new_key.to_bytes()).await?;
+            self.blockstore.delete(&self.owner, "", id).await?;
+            self.blockstore.put(&self.owner, "", id, &new_key.to_bytes()).await?;
         }
         Ok(())
     }
@@ -192,7 +194,7 @@ impl Keyring {
     pub async fn rotate(&mut self, id: impl ToString) -> anyhow::Result<()> {
         let current_key = self
             .blockstore
-            .get("test", "", &id.to_string())
+            .get(&self.owner, "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let current_key = StoredKey::from_bytes(&current_key)?;
@@ -202,8 +204,8 @@ impl Keyring {
             key: current_key.next_key,
             next_key,
         };
-        self.blockstore.delete("test", "", &id.to_string()).await?;
-        self.blockstore.put("test", "", &id.to_string(), &new_key.to_bytes()).await
+        self.blockstore.delete(&self.owner, "", &id.to_string()).await?;
+        self.blockstore.put(&self.owner, "", &id.to_string(), &new_key.to_bytes()).await
     }
 
     /// Remove a key from the keyring.
@@ -212,7 +214,7 @@ impl Keyring {
     /// Will return an error if the requested key cannot be removed from storage
     /// or the index cannot be updated.
     pub async fn remove(&mut self, id: impl ToString) -> anyhow::Result<()> {
-        self.blockstore.delete("test", "", &id.to_string()).await?;
+        self.blockstore.delete(&self.owner, "", &id.to_string()).await?;
         self.remove_index_entry(id).await
     }
 
@@ -227,7 +229,7 @@ impl Keyring {
     pub async fn public_key(&self, id: impl ToString) -> anyhow::Result<PublicKey> {
         let stored_key = self
             .blockstore
-            .get("test", "", &id.to_string())
+            .get(&self.owner, "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
@@ -276,7 +278,7 @@ impl Keyring {
     pub(crate) async fn private_key(&self, id: impl ToString) -> anyhow::Result<SecretKey> {
         let stored_key = self
             .blockstore
-            .get("test", "", &id.to_string())
+            .get(&self.owner, "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
@@ -305,7 +307,7 @@ impl Keyring {
     pub async fn curve(&self, id: impl ToString) -> anyhow::Result<Curve> {
         let stored_key = self
             .blockstore
-            .get("test", "", &id.to_string())
+            .get(&self.owner, "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
@@ -322,7 +324,7 @@ impl Keyring {
     pub async fn sign(&self, id: impl ToString, msg: &[u8]) -> anyhow::Result<Vec<u8>> {
         let stored_key = self
             .blockstore
-            .get("test", "", &id.to_string())
+            .get(&self.owner, "", &id.to_string())
             .await?
             .ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
@@ -371,7 +373,7 @@ impl Keyring {
     // Return the current or next key depending on the flag.
     async fn vk(&self, id: &str, next: bool) -> anyhow::Result<Vec<u8>> {
         let stored_key =
-            self.blockstore.get("test", "", id).await?.ok_or(anyhow!("key not found"))?;
+            self.blockstore.get(&self.owner, "", id).await?.ok_or(anyhow!("key not found"))?;
         let stored_key = StoredKey::from_bytes(&stored_key)?;
         match stored_key.curve {
             Curve::Ed25519 => {
@@ -407,19 +409,19 @@ impl Keyring {
     /// Will return an error if the index cannot be updated.
     async fn add_index_entry(&mut self, id: impl ToString) -> anyhow::Result<()> {
         let entry = IndexEntry {
-            owner: "test".to_string(),
+            owner: self.owner.clone(),
             partition: "".to_string(),
             id: id.to_string(),
         };
         let mut index = KeyringIndex::from_bytes(
             &self
                 .blockstore
-                .get("test", "keyring", "index")
+                .get(&self.owner, "keyring", "index")
                 .await?
                 .ok_or(anyhow!("index not found"))?,
         )?;
         index.add(entry);
-        self.blockstore.put("test", "keyring", "index", &index.to_bytes()).await
+        self.blockstore.put(&self.owner, "keyring", "index", &index.to_bytes()).await
     }
 
     /// Remove an entry from the keyring index.
@@ -428,19 +430,19 @@ impl Keyring {
     /// Will return an error if the index cannot be updated.
     async fn remove_index_entry(&mut self, id: impl ToString) -> anyhow::Result<()> {
         let entry = IndexEntry {
-            owner: "test".to_string(),
+            owner: self.owner.clone(),
             partition: "".to_string(),
             id: id.to_string(),
         };
         let mut index = KeyringIndex::from_bytes(
             &self
                 .blockstore
-                .get("test", "keyring", "index")
+                .get(&self.owner, "keyring", "index")
                 .await?
                 .ok_or(anyhow!("index not found"))?,
         )?;
         index.remove(&entry);
-        self.blockstore.put("test", "keyring", "index", &index.to_bytes()).await
+        self.blockstore.put(&self.owner, "keyring", "index", &index.to_bytes()).await
     }
 }
 
@@ -529,7 +531,7 @@ mod tests {
 
     #[tokio::test]
     async fn keyring_crud() {
-        let mut keyring = Keyring::new().await.expect("keyring created");
+        let mut keyring = Keyring::new("keyring_crud").await.expect("keyring created");
 
         // Create an Ed25519 key
         keyring.add(&Curve::Ed25519, "one").await.expect("Ed25519 key added");
@@ -577,7 +579,7 @@ mod tests {
     // key.
     #[tokio::test]
     async fn key_rotation() {
-        let mut keyring = Keyring::new().await.expect("keyring created");
+        let mut keyring = Keyring::new("key_rotation").await.expect("keyring created");
         keyring.add(&Curve::Ed25519, "one").await.expect("key added");
         let next_verifying_key =
             keyring.next_verifying_key("one").await.expect("next verifying key retrieved");
